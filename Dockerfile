@@ -1,6 +1,6 @@
 FROM centos:7
 
-# Install dependencies
+# Install dependencies.
 RUN yum update -y && \
     yum install -y httpd && \
     yum search wget && \
