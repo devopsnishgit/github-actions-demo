@@ -12,7 +12,7 @@ env:
 
 jobs:
   release:
-    name: Release.
+    name: Release
     runs-on: ubuntu-latest
 
     steps:
@@ -44,12 +44,18 @@ jobs:
         # Set the current date in seconds
         current_date=$(date +%s)
 
-        # Get the image details from ECR
+        # Fetch the image details from ECR
         images=$(aws ecr describe-images \
           --repository-name "$ECR_REPOSITORY" \
           --region "$AWS_REGION" \
           --query 'imageDetails[].[imageDigest, imageTags, imagePushedAt]' \
           --output json)
+
+        # Check if the AWS command was successful
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to retrieve image details from ECR."
+          exit 1
+        fi
 
         # Use jq to filter out images older than the specified number of days
         old_images=$(echo "$images" | jq -r \
