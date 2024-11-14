@@ -53,6 +53,8 @@ jobs:
 
       - name: Delete Oldest Docker Images from ECR
         run: |
+          echo "Fetching image details from ECR..."
+          
           # Fetch the image details from ECR
           images=$(aws ecr describe-images \
             --repository-name "$ECR_REPOSITORY" \
@@ -66,6 +68,9 @@ jobs:
             exit 1
           fi
 
+          # Debugging: Print the JSON structure to understand it
+          echo "$images" | jq .
+
           # Use jq to sort the images by `imagePushedAt` (oldest first) and limit to the oldest X images
           old_images=$(echo "$images" | jq -r \
             --argjson num_images "$NUM_IMAGES_TO_DELETE" \
@@ -77,6 +82,8 @@ jobs:
             exit 0
           fi
 
+          echo "Deleting the oldest images from ECR..."
+          
           # Loop through the old images and delete them
           for image in $(echo "$old_images" | jq -r '.imageDigest'); do
             echo "Deleting image with digest: $image"
