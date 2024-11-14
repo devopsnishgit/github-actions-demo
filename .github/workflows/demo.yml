@@ -8,98 +8,91 @@ env:
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REPOSITORY: nishant/my-first-docker-image
-  OLD_IMAGE_DAYS: 30  # Number of days to keep images; older images will be deleted.
+  NUM_IMAGES_TO_DELETE: 5  # Number of oldest images to delete (adjust this number as needed)
 
 jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-
     steps:
-    - name: Cancel Previous Runs
-      uses: styfle/cancel-workflow-action@0.4.1
-      with:
-        access_token: ${{ github.token }}
+      - name: Cancel Previous Runs
+        uses: styfle/cancel-workflow-action@0.4.1
+        with:
+          access_token: ${{ github.token }}
 
-    - name: Checkout
-      uses: actions/checkout@v2
-      with:
-        ref: ${{ github.event.pull_request.head.sha }}
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v1
-      with:
-        aws-access-key-id: ${{ env.AWS_ACCESS_ID }}
-        aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v1
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
 
-    - name: Delete Old Images from ECR
-      run: |
-        echo "Deleting images older than $OLD_IMAGE_DAYS days..."
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@master
 
-        # Set the current date in seconds
-        current_date=$(date +%s)
+      - name: Build & Push Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          RELEASE_IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+        run: |
+          docker buildx create --use
+          docker buildx build \
+            --tag ${{ env.RELEASE_IMAGE }} \
+            --push \
+            .
 
-        # Fetch the image details from ECR
-        images=$(aws ecr describe-images \
-          --repository-name "$ECR_REPOSITORY" \
-          --region "$AWS_REGION" \
-          --query 'imageDetails[].[imageDigest, imageTags, imagePushedAt]' \
-          --output json)
-
-        # Check if the AWS command was successful
-        if [ $? -ne 0 ]; then
-          echo "Error: Failed to retrieve image details from ECR."
-          exit 1
-        fi
-
-        # Use jq to filter out images older than the specified number of days
-        old_images=$(echo "$images" | jq -r \
-          --argjson current_date "$current_date" \
-          --argjson threshold_days "$(( OLD_IMAGE_DAYS * 86400 ))" \
-          'map(select(
-            ((($current_date - (.imagePushedAt | strptime("%Y-%m-%dT%H:%M:%S.%fZ") | mktime)) > $threshold_days))
-          )) | .[]')
-
-        # If no old images are found, exit early
-        if [[ -z "$old_images" ]]; then
-          echo "No images older than $OLD_IMAGE_DAYS days found. Skipping deletion."
-          exit 0
-        fi
-
-        # Loop through the old images and delete them
-        for image in $(echo "$old_images" | jq -r '.imageDigest'); do
-          echo "Deleting image with digest: $image"
-          
-          # Perform the image deletion
-          aws ecr batch-delete-image \
+      - name: Delete Oldest Docker Images from ECR
+        run: |
+          # Fetch the image details from ECR
+          images=$(aws ecr describe-images \
             --repository-name "$ECR_REPOSITORY" \
             --region "$AWS_REGION" \
-            --image-ids imageDigest="$image"
-            
-          # Check for success or failure
-          if [ $? -eq 0 ]; then
-            echo "Successfully deleted image with digest: $image."
-          else
-            echo "Failed to delete image with digest: $image."
+            --query 'imageDetails[].[imageDigest, imageTags, imagePushedAt]' \
+            --output json)
+
+          # Check if the AWS command was successful
+          if [ $? -ne 0 ]; then
+            echo "Error: Failed to retrieve image details from ECR."
+            exit 1
           fi
-        done
 
-    - name: Set up Docker Buildx
-      id: buildx
-      uses: docker/setup-buildx-action@master
+          # Use jq to sort the images by `imagePushedAt` (oldest first) and limit to the oldest X images
+          old_images=$(echo "$images" | jq -r \
+            --argjson num_images "$NUM_IMAGES_TO_DELETE" \
+            'sort_by(.imagePushedAt) | .[:$num_images]')
 
-    - name: Build & Push Image
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        RELEASE_IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
-      run: |
-        docker buildx create --use
-        docker buildx build \
-        --tag ${{ env.RELEASE_IMAGE }} \
-        --push \
-        .
+          # If no old images are found, exit early
+          if [[ -z "$old_images" ]]; then
+            echo "No images found in the repository. Skipping deletion."
+            exit 0
+          fi
+
+          # Loop through the old images and delete them
+          for image in $(echo "$old_images" | jq -r '.imageDigest'); do
+            echo "Deleting image with digest: $image"
+            
+            # Perform the image deletion
+            aws ecr batch-delete-image \
+              --repository-name "$ECR_REPOSITORY" \
+              --region "$AWS_REGION" \
+              --image-ids imageDigest="$image"
+              
+            # Check for success or failure
+            if [ $? -eq 0 ]; then
+              echo "Successfully deleted image with digest: $image."
+            else
+              echo "Failed to delete image with digest: $image."
+            fi
+          done
+
+          echo "Image deletion process complete."
