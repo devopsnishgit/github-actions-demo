@@ -1,14 +1,25 @@
-FROM ubuntu
+FROM almalinux:8
 
-WORKDIR /app
+# Install dependencies
+RUN yum install -y httpd wget unzip
 
-COPY requirements.txt /app
-COPY devops /app
+# Change directory
+WORKDIR /var/www/html
 
-RUN apt-get update && \
-    apt-get install -y python3 python3-pip && \
-    pip install -r requirements.txt && \
-    cd devops
+# Download webfiles
+RUN wget https://github.com/azeezsalu/techmax/archive/refs/heads/main.zip
 
-ENTRYPOINT ["python3"]
-CMD ["manage.py", "runserver", "0.0.0.0:8000"]
+# Unzip folder
+RUN unzip main.zip
+
+# Copy files into the HTML directory
+RUN cp -r techmax-main/* /var/www/html/
+
+# Remove unwanted folder
+RUN rm -rf techmax-main main.zip
+
+# Expose port 80
+EXPOSE 80
+
+# Set the default application to start when the container starts
+ENTRYPOINT ["/usr/sbin/httpd", "-D", "FOREGROUND"]
