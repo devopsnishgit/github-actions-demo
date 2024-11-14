@@ -1,7 +1,4 @@
-FROM centos:7
-
-# Install EPEL repository and update
-RUN yum install -y epel-release && yum update -y
+FROM almalinux:8
 
 # Install dependencies
 RUN yum install -y httpd wget unzip
