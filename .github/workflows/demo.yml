@@ -1,5 +1,4 @@
 name: Demo_Work_Flow
-
 on:
   push:
     branches: [main]
@@ -9,103 +8,92 @@ env:
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REPOSITORY: nishant/my-first-docker-image
-  IMAGE_TAG_PREFIX: "myapp-"  # Tag prefix for the image
-  OLD_IMAGE_DAYS: 30          # Delete images older than 30 days
-  IMAGES_TO_DELETE: 5         # Limit the number of images to delete
-  IMAGE_TAG: ${{ github.sha }} # Tag image with the commit hash
+  OLD_IMAGE_DAYS: 30  # Number of days to keep images; older images will be deleted.
 
 jobs:
   release:
-    name: Release
+    name: Release.
     runs-on: ubuntu-latest
+
     steps:
-      - name: Cancel Previous Runs
-        uses: styfle/cancel-workflow-action@0.4.1
-        with:
-          access_token: ${{ github.token }}
-      
-      - name: Checkout
-        uses: actions/checkout@v2
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v1
-        with:
-          aws-access-key-id: ${{ env.AWS_ACCESS_ID }}
-          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v1
-      
-      - name: Delete Old ECR Images (with specific tag prefix)
-        run: |
-          echo "Deleting images older than ${{ env.OLD_IMAGE_DAYS }} days with tag prefix ${{ env.IMAGE_TAG_PREFIX }}"
+    - name: Cancel Previous Runs
+      uses: styfle/cancel-workflow-action@0.4.1
+      with:
+        access_token: ${{ github.token }}
 
-          # Get the current date in seconds since epoch
-          current_date=$(date +%s)
+    - name: Checkout
+      uses: actions/checkout@v2
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ env.AWS_ACCESS_ID }}
+        aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Delete Old Images from ECR
+      run: |
+        echo "Deleting images older than $OLD_IMAGE_DAYS days..."
+
+        # Set the current date in seconds
+        current_date=$(date +%s)
+
+        # Get the image details from ECR
+        images=$(aws ecr describe-images \
+          --repository-name "$ECR_REPOSITORY" \
+          --region "$AWS_REGION" \
+          --query 'imageDetails[].[imageDigest, imageTags, imagePushedAt]' \
+          --output json)
+
+        # Use jq to filter out images older than the specified number of days
+        old_images=$(echo "$images" | jq -r \
+          --argjson current_date "$current_date" \
+          --argjson threshold_days "$(( OLD_IMAGE_DAYS * 86400 ))" \
+          'map(select(
+            ((($current_date - (.imagePushedAt | strptime("%Y-%m-%dT%H:%M:%S.%fZ") | mktime)) > $threshold_days))
+          )) | .[]')
+
+        # If no old images are found, exit early
+        if [[ -z "$old_images" ]]; then
+          echo "No images older than $OLD_IMAGE_DAYS days found. Skipping deletion."
+          exit 0
+        fi
+
+        # Loop through the old images and delete them
+        for image in $(echo "$old_images" | jq -r '.imageDigest'); do
+          echo "Deleting image with digest: $image"
           
-          # Get the list of image details from ECR
-          images=$(aws ecr describe-images \
-            --repository-name ${{ env.ECR_REPOSITORY }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'imageDetails[].[imageDigest, imageTags, imagePushedAt]' \
-            --output json)
-
-          # Use jq to filter out images older than the specified number of days and with the specified tag prefix
-          old_images=$(echo "$images" | jq -r \
-            --argjson current_date "$current_date" \
-            --argjson threshold_days "$(( OLD_IMAGE_DAYS * 86400 ))" \
-            --arg tag_prefix "${{ env.IMAGE_TAG_PREFIX }}" \
-            'map(select(
-              (.imageTags // [] | any( . | startswith($tag_prefix))) and 
-              ((($current_date - (.imagePushedAt | strptime("%Y-%m-%dT%H:%M:%S.%fZ") | mktime)) > $threshold_days))
-            )) | .[]')
-
-          # If there are images to delete, proceed with deletion
-          if [[ -n "$old_images" ]]; then
-            image_digests_to_delete=$(echo "$old_images" | jq -r '.[0]')
-
-            for image_digest in $image_digests_to_delete; do
-              echo "Deleting image with digest: $image_digest"
-              aws ecr batch-delete-image \
-                --repository-name ${{ env.ECR_REPOSITORY }} \
-                --region ${{ env.AWS_REGION }} \
-                --image-ids imageDigest="$image_digest"
-              if [[ $? -eq 0 ]]; then
-                echo "Successfully deleted image $image_digest."
-              else
-                echo "Failed to delete image $image_digest."
-              fi
-            done
+          # Perform the image deletion
+          aws ecr batch-delete-image \
+            --repository-name "$ECR_REPOSITORY" \
+            --region "$AWS_REGION" \
+            --image-ids imageDigest="$image"
+            
+          # Check for success or failure
+          if [ $? -eq 0 ]; then
+            echo "Successfully deleted image with digest: $image."
           else
-            echo "No images found matching criteria. No images to delete."
-      
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@master
-      
-      - name: Build & Tag Docker Image
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ github.sha }}   # Tag the image with the commit hash
-          IMAGE_TAG_LATEST: "latest"     # Optionally, tag as 'latest' as well
-        run: |
-          echo "Building Docker image with tags ${{ env.IMAGE_TAG }} and ${{ env.IMAGE_TAG_LATEST }}"
-          
-          # Create the buildx builder
-          docker buildx create --use
+            echo "Failed to delete image with digest: $image."
+          fi
+        done
 
-          # Build and tag the image with both the commit hash and the 'latest' tag
-          docker buildx build \
-            --tag ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
-            --tag ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG_LATEST }} \
-            --push .
-      
-      - name: Push Image to ECR
-        run: |
-          echo "Pushing Docker image to Amazon ECR"
-          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
-          docker push ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG_LATEST }}
+    - name: Set up Docker Buildx
+      id: buildx
+      uses: docker/setup-buildx-action@master
+
+    - name: Build & Push Image
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        RELEASE_IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+      run: |
+        docker buildx create --use
+        docker buildx build \
+        --tag ${{ env.RELEASE_IMAGE }} \
+        --push \
+        .
