@@ -1,46 +1,43 @@
-name: Demo_Work_Flow
+name: ECR Image Cleanup
+
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+  workflow_dispatch:
 
 env:
-  AWS_ACCESS_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_REGION: ${{ secrets.AWS_REGION }}
-  ECR_REPOSITORY: nishant/my-first-docker-image
-  NUM_IMAGES_TO_DELETE: 5  # Number of oldest images to delete (adjust this number as needed)
+  ECR_REPOSITORY: "nishant/my-first-docker-image"  # Set your ECR repository here
+  NUM_IMAGES_TO_DELETE: 5  # Set how many oldest images you want to delete
 
 jobs:
   release:
-    name: Release
+    name: Release & Cleanup ECR Images
     runs-on: ubuntu-latest
+
     steps:
-      - name: Cancel Previous Runs
-        uses: styfle/cancel-workflow-action@0.4.1
-        with:
-          access_token: ${{ github.token }}
-
-      - name: Checkout
+      # Checkout the code
+      - name: Checkout code
         uses: actions/checkout@v2
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
 
-      - name: Configure AWS credentials
+      # Configure AWS Credentials
+      - name: Set up AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
         with:
-          aws-access-key-id: ${{ env.AWS_ACCESS_ID }}
-          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
+      # Login to Amazon ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@master
-
-      - name: Build & Push Image
+      # Build and Push Docker image
+      - name: Build and push Docker image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           RELEASE_IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
@@ -51,11 +48,12 @@ jobs:
             --push \
             .
 
-      - name: Delete Oldest Docker Images from ECR
+      # Delete old images from ECR
+      - name: Delete oldest images from ECR
         run: |
           echo "Fetching image details from ECR..."
-          
-          # Fetch the image details from ECR
+
+          # Fetch image details from ECR
           images=$(aws ecr describe-images \
             --repository-name "$ECR_REPOSITORY" \
             --region "$AWS_REGION" \
@@ -68,13 +66,14 @@ jobs:
             exit 1
           fi
 
-          # Debugging: Print the JSON structure to understand it
+          # Debugging: Print the JSON structure to understand it (optional)
+          echo "Image details fetched from ECR: "
           echo "$images" | jq .
 
-          # Use jq to sort the images by `imagePushedAt` (oldest first) and limit to the oldest X images
+          # Use jq to sort images by `imagePushedAt` (oldest first)
           old_images=$(echo "$images" | jq -r \
             --argjson num_images "$NUM_IMAGES_TO_DELETE" \
-            'sort_by(.imagePushedAt) | .[:$num_images]')
+            'sort_by(.[2]) | .[:$num_images]')
 
           # If no old images are found, exit early
           if [[ -z "$old_images" ]]; then
@@ -83,17 +82,17 @@ jobs:
           fi
 
           echo "Deleting the oldest images from ECR..."
-          
+
           # Loop through the old images and delete them
-          for image in $(echo "$old_images" | jq -r '.imageDigest'); do
+          for image in $(echo "$old_images" | jq -r '.[0]'); do
             echo "Deleting image with digest: $image"
-            
+
             # Perform the image deletion
             aws ecr batch-delete-image \
               --repository-name "$ECR_REPOSITORY" \
               --region "$AWS_REGION" \
               --image-ids imageDigest="$image"
-              
+
             # Check for success or failure
             if [ $? -eq 0 ]; then
               echo "Successfully deleted image with digest: $image."
