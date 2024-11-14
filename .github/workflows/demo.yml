@@ -63,22 +63,26 @@ jobs:
 
         # Loop through the old images and delete them
         for image in $(echo "$old_images" | jq -r '.[0]'); do
-          # Extracting the image digest properly
-          digest=$(echo "$image" | sed 's/\[//g' | sed 's/\]//g' | sed 's/"//g')  # Remove square brackets and quotes
+          # Clean up the image digest (strip unwanted characters)
+          digest=$(echo "$image" | sed 's/\[//g' | sed 's/\]//g' | sed 's/"//g' | sed 's/,//g')  # Remove square brackets, quotes, and commas
 
-          echo "Deleting image with digest: $digest"
+          if [[ -n "$digest" ]]; then
+            echo "Deleting image with digest: $digest"
 
-          # Perform the image deletion
-          aws ecr batch-delete-image \
-            --repository-name "$ECR_REPOSITORY" \
-            --region "$AWS_REGION" \
-            --image-ids imageDigest="$digest"
+            # Perform the image deletion
+            aws ecr batch-delete-image \
+              --repository-name "$ECR_REPOSITORY" \
+              --region "$AWS_REGION" \
+              --image-ids imageDigest="$digest"
 
-          # Check for success or failure
-          if [ $? -eq 0 ]; then
-            echo "Successfully deleted image with digest: $digest."
+            # Check for success or failure
+            if [ $? -eq 0 ]; then
+              echo "Successfully deleted image with digest: $digest."
+            else
+              echo "Failed to delete image with digest: $digest."
+            fi
           else
-            echo "Failed to delete image with digest: $digest."
+            echo "Skipping invalid image digest."
           fi
         done
 
