@@ -1,30 +1,28 @@
 FROM centos:7
 
-# Install dependencies.
-RUN yum update -y && \
-    yum install -y httpd && \
-    yum search wget && \
-    yum install wget -y && \
-    yum install unzip -y
+# Install EPEL repository and update
+RUN yum install -y epel-release && yum update -y
 
-# change directory
-RUN cd /var/www/html
+# Install dependencies
+RUN yum install -y httpd wget unzip
 
-# download webfiles
+# Change directory
+WORKDIR /var/www/html
+
+# Download webfiles
 RUN wget https://github.com/azeezsalu/techmax/archive/refs/heads/main.zip
 
-# unzip folder
+# Unzip folder
 RUN unzip main.zip
 
-# copy files into html directory
+# Copy files into the HTML directory
 RUN cp -r techmax-main/* /var/www/html/
 
-# remove unwanted folder
+# Remove unwanted folder
 RUN rm -rf techmax-main main.zip
 
-# exposes port 80 on the container
+# Expose port 80
 EXPOSE 80
 
-# set the default application that will start when the container start
+# Set the default application to start when the container starts
 ENTRYPOINT ["/usr/sbin/httpd", "-D", "FOREGROUND"]
-                                                  
