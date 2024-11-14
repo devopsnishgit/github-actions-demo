@@ -61,7 +61,7 @@ jobs:
             --arg tag_prefix "${{ env.IMAGE_TAG_PREFIX }}" \
             'map(select(
               (.imageTags // [] | any( . | startswith($tag_prefix))) and 
-              (($current_date - (. | .[2] | strptime("%Y-%m-%dT%H:%M:%S.%fZ") | mktime)) > $threshold_days)
+              ((($current_date - (.imagePushedAt | strptime("%Y-%m-%dT%H:%M:%S.%fZ") | mktime)) > $threshold_days))
             )) | .[]')
 
           # If there are images to delete, proceed with deletion
