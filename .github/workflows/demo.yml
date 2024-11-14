@@ -47,7 +47,7 @@ jobs:
           # Get the current date in seconds since epoch
           current_date=$(date +%s)
           
-          # Get the list of image tags in the repository
+          # Get the list of image details from ECR
           images=$(aws ecr describe-images \
             --repository-name ${{ env.ECR_REPOSITORY }} \
             --region ${{ env.AWS_REGION }} \
