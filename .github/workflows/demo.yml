@@ -11,6 +11,7 @@ env:
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REPOSITORY: nishant/my-first-docker-image
   NUM_IMAGES_TO_DELETE: 1
+  IMAGE_TAG: latest  # You can also use dynamic tags like github.sha or github.ref if needed
 
 jobs:
   release:
@@ -52,13 +53,21 @@ jobs:
       - name: Build & Push Image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          RELEASE_IMAGE: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
         run: |
+          # Build the Docker image using Buildx
           docker buildx create --use
           docker buildx build \
-            --tag ${{ env.RELEASE_IMAGE }} \
+            --tag ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} \
             --push \
             .
+
+          # Tag the image manually with the correct ECR tag format (e.g., 'latest')
+          docker tag ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} ${{ env.ECR_REGISTRY }}/nishant/my-first-docker-image:${{ env.IMAGE_TAG }}
+
+          # Push the tagged image to the ECR repository
+          docker push ${{ env.ECR_REGISTRY }}/nishant/my-first-docker-image:${{ env.IMAGE_TAG }}
 
       # Fetch and delete old ECR images
       - name: Fetch and Delete Old ECR Images
