@@ -10,7 +10,7 @@ env:
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_REGION: ${{ secrets.AWS_REGION }}
   ECR_REPOSITORY: nishant/my-first-docker-image
-  NUM_IMAGES_TO_DELETE: 5
+  NUM_IMAGES_TO_DELETE: 1
 
 jobs:
   release:
