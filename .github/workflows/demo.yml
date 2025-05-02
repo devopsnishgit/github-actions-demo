@@ -129,4 +129,4 @@ jobs:
             fi
           done
   
-          echo "Image deletion process complete."
+          echo "Image deletion process complete." .
